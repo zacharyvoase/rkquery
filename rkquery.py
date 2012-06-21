@@ -3,95 +3,107 @@ rkQuery is a library for programmatically building Riak search queries. It aims
 to be easy to use, powerful, and protect from injection attacks that would be
 possible with simple string interpolation.
 
-Just start playing around with the ``q`` object:
+Just start playing around with the ``Q`` object:
 
-    >>> from rkquery import q
-    >>> q("some literal")
-    <q: "some literal">
-    >>> q(field="literal value")
-    <q: field:"literal value">
-    >>> q.not_(blocked="yes")
-    <q: NOT blocked:yes>
+    >>> from rkquery import Q
+    >>> Q("some literal")
+    <Q: "some literal">
+    >>> Q(field="literal value")
+    <Q: field:"literal value">
+    >>> Q.not_(blocked="yes")
+    <Q: NOT blocked:yes>
 
 You can provide multiple arguments, too. The default query combinator is `AND`:
 
-    >>> q("word1", "word2")
-    <q: word1 AND word2>
-    >>> q(username='foo', password='s3cr3t')
-    <q: password:s3cr3t AND username:foo>
+    >>> Q("word1", "word2")
+    <Q: word1 AND word2>
+    >>> Q(username='foo', password='s3cr3t')
+    <Q: password:s3cr3t AND username:foo>
 
-This is just a synonym for `q.all()`:
+This is just a synonym for `Q.all()`:
 
-    >>> q.all("word1", "word2")
-    <q: word1 AND word2>
-    >>> q.all(username='foo', password='s3cr3t')
-    <q: password:s3cr3t AND username:foo>
+    >>> Q.all("word1", "word2")
+    <Q: word1 AND word2>
+    >>> Q.all(username='foo', password='s3cr3t')
+    <Q: password:s3cr3t AND username:foo>
 
-Of course you can construct `OR` queries, using `q.any()`:
+Of course you can construct `OR` queries, using `Q.any()`:
 
-    >>> q.any("word1", "word2")
-    <q: word1 OR word2>
-    >>> q.any(username='foo', email='foo@example.com')
-    <q: email:"foo@example.com" OR username:foo>
-    >>> q(field=q.any("string1", "string2"))
-    <q: field:(string1 OR string2)>
+    >>> Q.any("word1", "word2")
+    <Q: word1 OR word2>
+    >>> Q.any(username='foo', email='foo@example.com')
+    <Q: email:"foo@example.com" OR username:foo>
+    >>> Q(field=Q.any("string1", "string2"))
+    <Q: field:(string1 OR string2)>
 
-Or by combining existing `q` objects:
+Or by combining existing `Q` objects:
 
-    >>> q.any("word1", "word2") & q("word3")
-    <q: (word1 OR word2) AND word3>
-    >>> q("word3") | q.all("word1", "word2")
-    <q: (word1 AND word2) OR word3>
-    >>> q.any(email="foo@example.com", username="foo") & q(password="s3cr3t")
-    <q: (email:"foo@example.com" OR username:foo) AND password:s3cr3t>
+    >>> Q.any("word1", "word2") & Q("word3")
+    <Q: (word1 OR word2) AND word3>
+    >>> Q("word3") | Q.all("word1", "word2")
+    <Q: (word1 AND word2) OR word3>
+    >>> Q.any(email="foo@example.com", username="foo") & Q(password="s3cr3t")
+    <Q: (email:"foo@example.com" OR username:foo) AND password:s3cr3t>
 
 There are helpers for negation as well (note that 'none' means 'not any'):
 
-    >>> q.none(blocked="yes", cheque_bounced="yes")
-    <q: NOT (blocked:yes OR cheque_bounced:yes)>
-    >>> ~q.any(blocked="yes", cheque_bounced="yes")
-    <q: NOT (blocked:yes OR cheque_bounced:yes)>
+    >>> Q.none(blocked="yes", cheque_bounced="yes")
+    <Q: NOT (blocked:yes OR cheque_bounced:yes)>
+    >>> ~Q.any(blocked="yes", cheque_bounced="yes")
+    <Q: NOT (blocked:yes OR cheque_bounced:yes)>
 
-You can do range queries with `q.range()`:
+You can do range queries with `Q.range()`:
 
-    >>> q.range("red", "rum")
-    <q: [red TO rum]>
-    >>> q(field=q.range("red", "rum"))
-    <q: field:[red TO rum]>
+    >>> Q.range("red", "rum")
+    <Q: [red TO rum]>
+    >>> Q(field=Q.range("red", "rum"))
+    <Q: field:[red TO rum]>
 
 Note that the default is an *inclusive* range (square brackets). The full set
 of range queries:
 
-    >>> q.range_inclusive("red", "rum")
-    <q: [red TO rum]>
-    >>> q.range_exclusive("red", "rum")
-    <q: {red TO rum}>
-    >>> q.between("red", "rum")
-    <q: {red TO rum}>
+    >>> Q.range_inclusive("red", "rum")
+    <Q: [red TO rum]>
+    >>> Q.range_exclusive("red", "rum")
+    <Q: {red TO rum}>
+    >>> Q.between("red", "rum")
+    <Q: {red TO rum}>
 
 Term boosting is a simple unary operation:
 
-    >>> q("red").boost(5)
-    <q: red^5>
+    >>> Q("red").boost(5)
+    <Q: red^5>
 
 As is proximity:
 
-    >>> q("See spot run").proximity(20)
-    <q: "See spot run"~20>
+    >>> Q("See spot run").proximity(20)
+    <Q: "See spot run"~20>
 """
 
 import itertools as it
 import re
 
 
-class Q(object):
+class Query(object):
+    """
+    A Riak query.
+
+    This object represents a Riak query. You can add more constraints using the
+    various methods and operators defined on this class.
+
+    To get your generated query, just use ``unicode()``:
+
+        >>> unicode(Q(field1="foo", field2="bar"))
+        u'field1:foo AND field2:bar'
+    """
+
     __slots__ = ('root', '__weakref__')
 
     def __init__(self, root):
         self.root = root
 
     def __repr__(self):
-        return "<q: %s>" % unicode(self.root)
+        return "<Q: %s>" % unicode(self.root)
 
     def __unicode__(self):
         return unicode(self.root)
@@ -101,24 +113,26 @@ class Q(object):
 
     def __or__(self, other):
         if hasattr(self.root, '__or__'):
-            return Q(self.root | make_node(other))
-        return Q(Any((self.root, make_node(other))))
+            return Query(self.root | make_node(other))
+        return Query(Any((self.root, make_node(other))))
 
     def __and__(self, other):
         if hasattr(self.root, '__and__'):
-            return Q(self.root & make_node(other))
-        return Q(All((self.root, make_node(other))))
+            return Query(self.root & make_node(other))
+        return Query(All((self.root, make_node(other))))
 
     def __invert__(self):
         if not hasattr(self.root, '__invert__'):
-            return Q(Not(self.root))
-        return Q(~self.root)
+            return Query(Not(self.root))
+        return Query(~self.root)
 
     def boost(self, factor):
-        return Q(Boost(self.root, factor))
+        """Set the result importance factor of this term."""
+        return Query(Boost(self.root, factor))
 
     def proximity(self, proximity):
-        return Q(Proximity(self.root, proximity))
+        """Set a proximity for this term."""
+        return Query(Proximity(self.root, proximity))
 
 
 class QueryNode(object):
@@ -317,7 +331,7 @@ class ExclusiveRange(QueryNode):
 
 
 def make_node(obj):
-    if isinstance(obj, Q):
+    if isinstance(obj, Query):
         return obj.root
     elif isinstance(obj, QueryNode):
         return obj
@@ -330,7 +344,7 @@ def make_node(obj):
     raise TypeError("Cannot make a query node from: %r" % (obj,))
 
 
-def q(*args, **kwargs):
+def Q(*args, **kwargs):
 
     """
     Build Riak search queries safely and easily.
@@ -347,11 +361,11 @@ def combinator(name, c_type):
         argc = len(args) + len(kwargs)
         if argc == 1:
             if args:
-                return Q(make_node(args[0]))
+                return Query(make_node(args[0]))
             else:
-                return Q(make_node(kwargs.items()[0]))
+                return Query(make_node(kwargs.items()[0]))
         else:
-            return Q(c_type(make_node(arg)
+            return Query(c_type(make_node(arg)
                             for arg in it.chain(args, kwargs.iteritems())))
     q_combinator.__name__ = name
     return q_combinator
@@ -370,18 +384,18 @@ def q_not(*args, **kwargs):
 
 
 def q_inclusive_range(start, stop):
-    return Q(InclusiveRange(make_node(start), make_node(stop)))
+    return Query(InclusiveRange(make_node(start), make_node(stop)))
 
 
 def q_exclusive_range(start, stop):
-    return Q(ExclusiveRange(make_node(start), make_node(stop)))
+    return Query(ExclusiveRange(make_node(start), make_node(stop)))
 
 
-q.all = q_all
-q.any = q_any
-q.none = q_none
-q.not_ = q_not
-q.range = q_inclusive_range
-q.range_inclusive = q_inclusive_range
-q.range_exclusive = q_exclusive_range
-q.between = q_exclusive_range
+Q.all = q_all
+Q.any = q_any
+Q.none = q_none
+Q.not_ = q_not
+Q.range = q_inclusive_range
+Q.range_inclusive = q_inclusive_range
+Q.range_exclusive = q_exclusive_range
+Q.between = q_exclusive_range
